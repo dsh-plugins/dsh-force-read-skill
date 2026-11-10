@@ -1,0 +1,10 @@
+{
+  "name": "@dsh-plugin/dsh-force-read-skill",
+  "latest": "0.1.0",
+  "publishedAt": "2026-11-10T09:16:05.896Z",
+  "dist": {
+    "tarball": "https://registry.npmjs.org/@dsh-plugin/dsh-force-read-skill/-/dsh-force-read-skill-0.1.0.tgz",
+    "integrity": "sha512-hDwjKL5K5F5a1M0zaqvFVT4bTL/H5Cz5Kn377PlcLMOjOisvsBsZ5CTyEoXMZR1ZSKnFfRXjus+AUksC/DzAXg==",
+    "unpackedSize": 13346
+  }
+}
