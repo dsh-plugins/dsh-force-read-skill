@@ -1,0 +1,3 @@
+- insert:
+    - id: dsh-force-read-skill
+      name: '@dsh-plugin/dsh-force-read-skill'

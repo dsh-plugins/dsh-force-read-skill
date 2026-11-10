@@ -1,0 +1,107 @@
+name: CI and npm Publish
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Quality (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm pack --dry-run
+
+  publish:
+    name: Publish to npm
+    needs: quality
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm ci
+      - name: Publish exact version
+        run: |
+          set -euo pipefail
+          name="$(node -p "require('./package.json').name")"
+          base="$(node -p "require('./package.json').version")"
+          if [[ ! "$base" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::package.json 版本必须使用 X.Y.Z 格式"
+            exit 1
+          fi
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            if [[ "$GITHUB_REF_NAME" != "v$base" ]]; then
+              echo "::error::标签 $GITHUB_REF_NAME 必须与 v$base 一致"
+              exit 1
+            fi
+            version="$base"
+            channel=latest
+          else
+            version="${base}-dev.${GITHUB_RUN_ID}"
+            channel=next
+            npm version "$version" --no-git-tag-version --ignore-scripts
+          fi
+          if published_sha="$(npm view "$name@$version" gitHead --registry=https://registry.npmjs.org 2>&1)"; then
+            if [[ "$published_sha" != "$GITHUB_SHA" ]]; then
+              echo "::error::$name@$version 已发布，gitHead 与当前提交不一致"
+              exit 1
+            fi
+            echo "$name@$version 已由当前提交发布"
+          elif [[ "$published_sha" == *E404* ]]; then
+            npm publish --tag "$channel"
+          else
+            printf '%s\n' "$published_sha" >&2
+            exit 1
+          fi
+
+  dump-latest:
+    name: Update npm latest metadata
+    needs: publish
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: '24'
+      - run: node scripts/dump-npm-latest.mjs
+      - name: Commit npm metadata
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add npm-latest.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): 更新 npm 正式版元数据"
+            git fetch origin main
+            git rebase origin/main
+            git push origin main
+          fi
