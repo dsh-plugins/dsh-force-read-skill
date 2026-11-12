@@ -9,7 +9,7 @@ const catalog = ['alpha', 'beta', 'bar', 'example', 'foo'];
 
 const registry = {
   defaultId: 'standard',
-  list: () => [
+  list: async () => [
     { id: 'standard', name: '标准', order: 1 },
     { id: 'ptc', name: 'PTC', order: 2 },
     { id: 'minimal', name: '极简', order: 3 },
@@ -196,7 +196,7 @@ test('紧跟 skill-catalog 注入未读必读 SKILL 提示，读齐后不再注�
   assert.equal(withReminder.messages.length, 3);
   assert.equal(withReminder.messages[1], catalog);
   const reminder = withReminder.messages[2];
-  assert.equal(reminder.source.kind, 'plugin');
+  assert.equal(reminder.source.kind, 'dsh-force-read-skill');
   const text = reminder.content[0].text;
   assert.match(text, /must read the following skill/);
   assert.match(text, /`foo`/);

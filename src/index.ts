@@ -18,7 +18,7 @@ interface Preferences {
 
 interface AgentPresets {
   readonly defaultId?: string;
-  list(): readonly { readonly id: string; readonly name?: string; readonly order?: number }[];
+  list(): Promise<readonly { readonly id: string; readonly name?: string; readonly order?: number }[]>;
   presetForSession?(session: unknown): string | null;
   composedPreset?(ctx: unknown): string | undefined;
 }
@@ -74,13 +74,13 @@ interface PluginContext extends CordisContext {
   readonly skills: Skills;
   on(event: 'tools/pre-execute', listener: (exec: Execution, next: () => Promise<PreDecision>) => Promise<PreDecision>, options?: { prepend?: boolean }): () => void;
   on(event: 'tools/post-execute', listener: (exec: Execution, result: Result, next: () => Promise<PostDecision>) => Promise<PostDecision>): () => void;
-  on(event: 'agent/pre-step', listener: (payload: PreStepPayload, next: () => Promise<PreStepDecision>) => Promise<PreStepDecision>): () => void;
+  on(event: 'agent/pre-step', listener: (payload: PreStepPayload, next: () => Promise<PreStepDecision>) => Promise<PreStepDecision>, options?: { prepend?: boolean }): () => void;
 }
 
-/** 读取注册表中的预设清单；服务缺失时退化为仅标准分组。 */
-function rosterOf(presets: AgentPresets | undefined): readonly { id: string; name?: string }[] {
+/** 读取注册表中的预设清单；服务缺失时退化为仅标准分组。list() 返回 Promise，必须 await。 */
+async function rosterOf(presets: AgentPresets | undefined): Promise<readonly { id: string; name?: string }[]> {
   try {
-    const roster = presets?.list() ?? [];
+    const roster = await presets?.list() ?? [];
     return roster.length === 0 ? [{ id: 'standard' }] : roster;
   } catch (error) {
     console.warn(`[${id}] agent-preset registry unavailable, falling back to the standard group:`, error);
@@ -104,7 +104,7 @@ function resolvePreset(presets: AgentPresets | undefined, exec: Execution): stri
 export async function apply(ctx: PluginContext): Promise<void> {
   const loader = ctx.dshLoader;
   const presets = loader.services.get('agentPresets') as AgentPresets | undefined;
-  const roster = rosterOf(presets);
+  const roster = await rosterOf(presets);
   const catalog = await ctx.skills.list().catch((error: unknown) => {
     console.warn(`[${id}] skill catalog unavailable, falling back to empty options:`, error);
     return [] as readonly { name: string }[];
@@ -202,7 +202,9 @@ export async function apply(ctx: PluginContext): Promise<void> {
   ctx.effect(() => tools.guard(check), `${id}:guard`);
 
   // 紧跟宿主注入的 skill-catalog，附一条「必须先阅读」提示并列出未读的必读 SKILL。
-  // 本插件 bundle 在 tool-skill 之后加载，默认 append 使其注入排在 catalog 之后。
+  // agent/pre-step 是瀑布事件：后注册者的 next() 先返回裸决策，先注册者在后处理阶段才追加
+  // catalog。本插件等 dshLoader 就绪后激活，注册必然晚于 tool-skill；必须用 prepend 把
+  // 监听器排到链首，才能在 await next() 拿到的决策里看见 catalog 并把提醒插到其后。
   ctx.effect(() => ctx.on('agent/pre-step', async ({ agent }, next) => {
     const decision = await next();
     if (decision.kind !== 'enter') {
@@ -225,14 +227,15 @@ export async function apply(ctx: PluginContext): Promise<void> {
       'Any one of them satisfies the requirement for this agent preset.',
       '</system-reminder>',
     ].join('\n');
+    // v4 会话格式拒绝 kind: 'plugin'，要求生产者自有的 source kind（同 agent-instructions）。
     const reminder = loader.llm.createUserMessage({
-      source: { kind: 'plugin', plugin: id },
+      source: { kind: id, form: 'reminder' },
       content: [{ type: 'text', text }],
     });
     const injected = [...decision.messages];
     injected.splice(catalogIndex + 1, 0, reminder);
     return { ...decision, messages: injected };
-  }), `${id}:catalog-reminder`);
+  }, { prepend: true }), `${id}:catalog-reminder`);
 
   ctx.effect(() => ctx.on('tools/post-execute', async (exec, result, next) => {
     if (!exec.agent || !exec.parent || exec.name !== 'skill' || result.isError) {
