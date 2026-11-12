@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugin/dsh-force-read-skill",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "要求 DeepSeek Harness 模型先读取 SKILL，再执行其他工具。",
   "repository": {
     "type": "git",

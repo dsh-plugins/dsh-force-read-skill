@@ -25,7 +25,9 @@ Edit and save the configuration on the plugin details page. Saved changes take e
 | Setting | Default | Behavior |
 | --- | --- | --- |
 | Require skill reading (`enabled`) | Enabled | Reject other tool calls until the model reads an eligible skill. |
-| Required skills (`requiredSkills`) | Empty list | An empty list accepts any skill. Otherwise, the model must read one skill from the list. |
+| Required skills per preset (`presets`) | Empty list for every preset | Each preset (mode) has its own list. An empty list disables the requirement for that preset; otherwise the model must read one skill from the list. |
+
+The guard uses the list of the preset active in the current session; when the active preset cannot be determined, calls are not blocked. The preset list comes from the agent preset registry, and the multiselect options come from the currently loaded skill catalog — skills installed later appear after a restart. Presets that load no skill provider (for example the minimal mode) get no field and are never blocked. Upgrading from 0.1.x migrates the old flat skill list into the default preset group. Saved skill names that no longer exist stay in the configuration until removed manually.
 
 A successful read applies to the current session, including resumed sessions, until the next successful context compaction. A `/skill-name` invocation that injects eligible skill instructions also satisfies the requirement.
 

@@ -5,36 +5,61 @@ import { apply } from '../lib/index.js';
 
 const denied = { kind: 'deny', reason: 'You must read those skills that you should read.' };
 const allowed = { kind: 'allow' };
+const catalog = ['alpha', 'beta', 'bar', 'example', 'foo'];
 
-async function mount() {
+const registry = {
+  defaultId: 'standard',
+  list: () => [
+    { id: 'standard', name: '标准', order: 1 },
+    { id: 'ptc', name: 'PTC', order: 2 },
+    { id: 'minimal', name: '极简', order: 3 },
+  ],
+  presetForSession: session => session.preset ?? null,
+};
+
+async function mount({ preset = 'standard', seed } = {}) {
   const listeners = new Map();
   const events = [];
-  let guard;
+  const services = {
+    tools: { guard: listener => { services.guardListener = listener; } },
+    agentPresets: registry,
+  };
   let value;
+  const updates = [];
+  const handle = {
+    get: () => ({ value, revision: updates.length }),
+    update: async (next, revision) => {
+      assert.equal(revision, updates.length);
+      value = { ...value, ...next };
+      updates.push(next);
+      return { value, revision: updates.length };
+    },
+  };
   await apply({
     dshLoader: {
       config: {
         register(_ctx, template) {
-          value = defaultsFor(template.fields);
-          return { get: () => ({ value }) };
+          value = { ...defaultsFor(template.fields), ...seed };
+          return handle;
         },
       },
-      services: {
-        get: () => ({ guard: listener => { guard = listener; } }),
-      },
-      llm: {
-        createUserMessage: message => message,
-      },
+      services: { get: name => services[name] },
+      llm: { createUserMessage: message => message },
     },
+    skills: { list: async () => catalog.map(name => ({ name })) },
     effect: setup => setup(),
     on: (event, listener) => listeners.set(event, listener),
   });
-  const agent = { session: { snapshotEvents: () => events } };
+  const session = { preset, snapshotEvents: () => events };
+  const agent = { session };
+  const exec = overrides => ({ name: 'read', agent, ...overrides });
   return {
     events,
-    value,
-    check: (name, parent) => listeners.get('tools/pre-execute')({ name, agent, parent }, async () => allowed),
-    guard: name => guard({ name, agent }),
+    updates,
+    get value() { return value; },
+    agent,
+    check: (name = 'read', overrides) => listeners.get('tools/pre-execute')(exec({ name, ...overrides }), async () => allowed),
+    guard: (name = 'read') => services.guardListener(exec({ name })),
     finishSkill: (result, parent) => listeners.get('tools/post-execute')(
       { name: 'skill', agent, parent }, result, async () => ({ kind: 'accept' }),
     ),
@@ -50,8 +75,9 @@ function readSkill(events, name, isError, role = 'tool') {
   );
 }
 
-test('成功读取后放行到下一次成功压缩', async () => {
-  const { events, check, guard } = await mount();
+test('按默认预设分组要求阅读，成功读取后放行到下一次成功压缩', async () => {
+  const { events, value, check, guard } = await mount();
+  value.presets.standard = ['example'];
   assert.deepEqual(await check('read'), denied);
   assert.equal(guard('read'), denied.reason);
   assert.deepEqual(await check('skill'), allowed);
@@ -72,7 +98,7 @@ test('成功读取后放行到下一次成功压缩', async () => {
 
 test('列表匹配任一名称，配置保存后立即生效', async () => {
   const { events, value, check } = await mount();
-  value.requiredSkills = ['foo', 'bar'];
+  value.presets.standard = ['foo', 'bar'];
   readSkill(events, 'example', false, 'user');
   events.push({ type: 'step/end' });
   assert.deepEqual(await check('read'), denied);
@@ -80,20 +106,78 @@ test('列表匹配任一名称，配置保存后立即生效', async () => {
   events.push({ type: 'step/end' });
   assert.deepEqual(await check('read'), allowed);
 
-  value.requiredSkills = ['foo'];
+  value.presets.standard = ['foo'];
   assert.deepEqual(await check('read'), denied);
   value.enabled = false;
   assert.deepEqual(await check('read'), allowed);
 });
 
+test('会话预设取用对应分组，其他分组互不影响', async () => {
+  const { events, value, check } = await mount({ preset: 'ptc' });
+  value.presets.standard = ['alpha'];
+  value.presets.ptc = ['beta'];
+  assert.deepEqual(await check('read'), denied);
+  readSkill(events, 'alpha', false);
+  events.push({ type: 'step/end' });
+  assert.deepEqual(await check('read'), denied);
+  readSkill(events, 'beta', false);
+  events.push({ type: 'step/end' });
+  assert.deepEqual(await check('read'), allowed);
+});
+
+test('分组留空或未配置时不强制阅读', async () => {
+  const { value, check } = await mount({ preset: 'minimal' });
+  assert.deepEqual(await check('read'), allowed);
+  value.presets.minimal = [];
+  assert.deepEqual(await check('read'), allowed);
+});
+
+test('无法解析预设时回退默认预设；注册表缺失时放行', async () => {
+  const { value, check } = await mount({ preset: null });
+  value.presets.standard = ['alpha'];
+  assert.deepEqual(await check('read'), denied);
+
+  const listeners = new Map();
+  let plainValue;
+  const plainServices = { tools: { guard: () => () => {} } };
+  await apply({
+    dshLoader: {
+      config: {
+        register(_ctx, template) {
+          plainValue = defaultsFor(template.fields);
+          return { get: () => ({ value: plainValue, revision: 0 }), update: async () => ({ value: plainValue, revision: 0 }) };
+        },
+      },
+      services: { get: name => plainServices[name] },
+      llm: { createUserMessage: message => message },
+    },
+    skills: { list: async () => catalog.map(name => ({ name })) },
+    effect: setup => setup(),
+    on: (event, listener) => listeners.set(event, listener),
+  });
+  const exec = { name: 'read', agent: { session: { snapshotEvents: () => [] } } };
+  plainValue.presets.standard = ['alpha'];
+  assert.deepEqual(await listeners.get('tools/pre-execute')(exec, async () => allowed), allowed);
+});
+
 test('PTC 在正文进入会话后放行其他工具', async () => {
-  const { events, check, finishSkill } = await mount();
+  const { events, value, check, finishSkill } = await mount({ preset: 'ptc' });
+  value.presets.ptc = ['example'];
   const parent = {};
   assert.deepEqual(await check('run_code'), allowed);
   const content = [{ type: 'text', text: '<skill_content name="example">\nExample instructions.\n</skill_content>' }];
   const decision = await finishSkill({ isError: false, content }, parent);
-  assert.deepEqual(decision.additionalContexts[0].content, content);
-  assert.deepEqual(await check('read', parent), denied);
+  assert.deepEqual(decision.additionalContexts?.[0]?.content, content);
+  assert.deepEqual(await check('read', { parent }), denied);
   events.push({ type: 'user/message', data: decision.additionalContexts[0] });
-  assert.deepEqual(await check('read', parent), allowed);
+  assert.deepEqual(await check('read', { parent }), allowed);
+});
+
+test('旧版 requiredSkills 迁移进默认预设分组并清空旧字段', async () => {
+  const { value, updates, check } = await mount({ seed: { requiredSkills: ['foo'] } });
+  assert.equal(updates.length, 1);
+  assert.deepEqual(updates[0].presets, { standard: ['foo'], ptc: [], minimal: [] });
+  assert.deepEqual(updates[0].requiredSkills, []);
+  assert.deepEqual(value.presets.standard, ['foo']);
+  assert.deepEqual(await check('read'), denied);
 });
