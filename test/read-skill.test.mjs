@@ -63,6 +63,7 @@ async function mount({ preset = 'standard', seed } = {}) {
     finishSkill: (result, parent) => listeners.get('tools/post-execute')(
       { name: 'skill', agent, parent }, result, async () => ({ kind: 'accept' }),
     ),
+    preStep: (messages, next) => listeners.get('agent/pre-step')({ agent, messages, signal: new AbortController().signal }, next),
   };
 }
 
@@ -180,4 +181,37 @@ test('旧版 requiredSkills 迁移进默认预设分组并清空旧字段', asyn
   assert.deepEqual(updates[0].requiredSkills, []);
   assert.deepEqual(value.presets.standard, ['foo']);
   assert.deepEqual(await check('read'), denied);
+});
+
+test('紧跟 skill-catalog 注入未读必读 SKILL 提示，读齐后不再注入', async () => {
+  const { events, value, preStep } = await mount();
+  value.presets.standard = ['foo', 'bar'];
+  const catalog = { id: 'c1', role: 'user', source: { kind: 'skill-catalog' }, content: [] };
+  const prior = { id: 'c0', role: 'user', source: { kind: 'user' }, content: [] };
+  const base = { kind: 'enter', messages: [prior, catalog] };
+
+  // 未读时：在 catalog 之后插入提示，列出未读 SKILL。
+  const withReminder = await preStep(base.messages, async () => base);
+  assert.equal(withReminder.kind, 'enter');
+  assert.equal(withReminder.messages.length, 3);
+  assert.equal(withReminder.messages[1], catalog);
+  const reminder = withReminder.messages[2];
+  assert.equal(reminder.source.kind, 'plugin');
+  const text = reminder.content[0].text;
+  assert.match(text, /must read the following skill/);
+  assert.match(text, /`foo`/);
+  assert.match(text, /`bar`/);
+
+  // 已读其一后：放行，不再注入。
+  readSkill(events, 'bar', false);
+  events.push({ type: 'step/end' });
+  const clean = await preStep(base.messages, async () => base);
+  assert.deepEqual(clean.messages, base.messages);
+
+  // 无 catalog 消息时不注入；决策非 enter 时透传。
+  const noCatalog = { kind: 'enter', messages: [prior] };
+  const noCatalogOut = await preStep(noCatalog.messages, async () => noCatalog);
+  assert.equal(noCatalogOut.messages.length, 1);
+  const rejected = { kind: 'reject' };
+  assert.deepEqual(await preStep(base.messages, async () => rejected), rejected);
 });

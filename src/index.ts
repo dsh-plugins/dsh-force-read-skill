@@ -1,6 +1,6 @@
 import type { CordisContext, HostAPI } from '@dsh-plugin/dsh-loader';
 import { defineConfig, type ConfigField } from '@dsh-plugin/dsh-loader/config';
-import { hasReadSkill, readSkillName, type ContentBlock, type SessionHistory } from './history.js';
+import { hasReadSkill, missingSkills, readSkillName, type ContentBlock, type SessionHistory } from './history.js';
 
 export const name = '@dsh-plugin/dsh-force-read-skill';
 export const inject = ['dshLoader', 'tools', 'skills'];
@@ -44,6 +44,22 @@ interface Tools {
   guard(check: (exec: Execution) => string | undefined): () => void;
 }
 
+/** agent/pre-step 注入用的会话内消息（与宿主 UserMessage 同形的最小结构）。 */
+interface CatalogMessage {
+  readonly id?: string;
+  readonly source?: { readonly kind?: string };
+}
+
+interface PreStepPayload {
+  readonly agent: { readonly session: SessionHistory };
+  readonly messages: readonly CatalogMessage[];
+  readonly signal: AbortSignal;
+}
+
+type PreStepDecision =
+  | { readonly kind: 'reject' }
+  | { readonly kind: 'enter'; readonly messages: readonly unknown[] };
+
 type PreDecision =
   | { readonly kind: 'allow' | 'cancel' }
   | { readonly kind: 'ask'; readonly reason?: string }
@@ -58,6 +74,7 @@ interface PluginContext extends CordisContext {
   readonly skills: Skills;
   on(event: 'tools/pre-execute', listener: (exec: Execution, next: () => Promise<PreDecision>) => Promise<PreDecision>, options?: { prepend?: boolean }): () => void;
   on(event: 'tools/post-execute', listener: (exec: Execution, result: Result, next: () => Promise<PostDecision>) => Promise<PostDecision>): () => void;
+  on(event: 'agent/pre-step', listener: (payload: PreStepPayload, next: () => Promise<PreStepDecision>) => Promise<PreStepDecision>): () => void;
 }
 
 /** 读取注册表中的预设清单；服务缺失时退化为仅标准分组。 */
@@ -163,6 +180,19 @@ export async function apply(ctx: PluginContext): Promise<void> {
     return denialReason;
   };
 
+  /** 取当前会话生效预设下尚未阅读的必读 SKILL；无可注入项时返回空数组。 */
+  const reminderMissing = (agent: { session: SessionHistory }, preset: string | undefined): readonly string[] => {
+    const value = preferences.get().value;
+    if (!value.enabled || preset === undefined) {
+      return [];
+    }
+    const required = value.presets?.[preset] ?? [];
+    if (required.length === 0) {
+      return [];
+    }
+    return missingSkills(agent.session, required);
+  };
+
   // 先于权限询问拒绝调用，并在宿主的最终检查中再次执行同一规则。
   ctx.effect(() => ctx.on('tools/pre-execute', async (exec, next) => {
     const reason = check(exec);
@@ -170,6 +200,39 @@ export async function apply(ctx: PluginContext): Promise<void> {
   }, { prepend: true }), `${id}:check`);
   const tools = loader.services.get('tools') as Tools;
   ctx.effect(() => tools.guard(check), `${id}:guard`);
+
+  // 紧跟宿主注入的 skill-catalog，附一条「必须先阅读」提示并列出未读的必读 SKILL。
+  // 本插件 bundle 在 tool-skill 之后加载，默认 append 使其注入排在 catalog 之后。
+  ctx.effect(() => ctx.on('agent/pre-step', async ({ agent }, next) => {
+    const decision = await next();
+    if (decision.kind !== 'enter') {
+      return decision;
+    }
+    const preset = resolvePreset(presets, { name: 'skill', agent, ctx: undefined });
+    const missing = reminderMissing(agent, preset);
+    if (missing.length === 0) {
+      return decision;
+    }
+    const messages = decision.messages as readonly CatalogMessage[];
+    const catalogIndex = messages.findIndex((message) => message.source?.kind === 'skill-catalog');
+    if (catalogIndex === -1) {
+      return decision;
+    }
+    const text = [
+      '<system-reminder>',
+      'You must read the following skill(s) with the `skill` tool before calling any other tool:',
+      ...missing.map((name) => `- \`${name}\``),
+      'Any one of them satisfies the requirement for this agent preset.',
+      '</system-reminder>',
+    ].join('\n');
+    const reminder = loader.llm.createUserMessage({
+      source: { kind: 'plugin', plugin: id },
+      content: [{ type: 'text', text }],
+    });
+    const injected = [...decision.messages];
+    injected.splice(catalogIndex + 1, 0, reminder);
+    return { ...decision, messages: injected };
+  }), `${id}:catalog-reminder`);
 
   ctx.effect(() => ctx.on('tools/post-execute', async (exec, result, next) => {
     if (!exec.agent || !exec.parent || exec.name !== 'skill' || result.isError) {

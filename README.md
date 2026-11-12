@@ -33,6 +33,8 @@ A successful read applies to the current session, including resumed sessions, un
 
 The `skill` tool is exempt. Programmatic Tool Calling (PTC) presets can read through `run_code` and receive the instructions in the next model request. Other tool calls in the same batch still undergo the check.
 
+Beyond blocking calls, the plugin also appends a reminder right after the injected skill catalog (`skill-catalog`), listing the preset's required skills the model has not read yet and telling it to call `skill` before any other tool. Once every required skill is read — or when the active preset has no required list — no reminder is added.
+
 Rejected calls return **You must read those skills that you should read.**
 
 ## Build and test

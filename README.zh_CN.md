@@ -33,6 +33,8 @@ dsh plugin --profile web add "@dsh-plugin/dsh-force-read-skill"
 
 插件豁免 `skill`。程序化工具调用（Programmatic Tool Calling，PTC）预设可通过 `run_code` 读取 SKILL，正文会随下一步请求发送给模型。同一批次内的其他工具调用仍需通过检查。
 
+除拦截工具调用外，插件还会在宿主注入的 SKILL 目录（`skill-catalog`）之后追加一条提示，列出当前生效预设下尚未阅读的必读 SKILL，提醒模型在调用其他工具前先用 `skill` 读取；已读齐或该预设无必读项时不追加。
+
 未满足要求时，工具返回 **You must read those skills that you should read.**
 
 ## 构建与测试

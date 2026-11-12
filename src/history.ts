@@ -53,6 +53,18 @@ export function readSkillName(content: readonly ContentBlock[]): string | undefi
 
 /** 查找最近一次成功压缩后已交付给模型的技能读取结果。 */
 export function hasReadSkill(session: SessionHistory, requiredSkills: readonly string[]): boolean {
+  return missingSkills(session, requiredSkills).length === 0;
+}
+
+/** 列出尚未阅读的必读技能；requiredSkills 为空（任意一个即可）时无法枚举未读项，返回空数组。 */
+export function missingSkills(session: SessionHistory, requiredSkills: readonly string[]): readonly string[] {
+  if (requiredSkills.length === 0) {
+    return [];
+  }
+  return hasReadSkillInternal(session, requiredSkills) ? [] : requiredSkills;
+}
+
+function hasReadSkillInternal(session: SessionHistory, requiredSkills: readonly string[]): boolean {
   const events = session.snapshotEvents?.() ?? session.events ?? [];
   let previousStep = false;
 
