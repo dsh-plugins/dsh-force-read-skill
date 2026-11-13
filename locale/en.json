@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Force read skill",
+    "description": "Requires the model to read a configured skill before it may call any other tool; a successful read lasts until the next context compaction."
+  }
+}
