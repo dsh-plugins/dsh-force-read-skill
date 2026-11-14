@@ -24,10 +24,14 @@ Edit and save the configuration on the plugin details page. Saved changes take e
 
 | Setting | Default | Behavior |
 | --- | --- | --- |
-| Require skill reading (`enabled`) | Enabled | Reject other tool calls until the model reads an eligible skill. |
-| Required skills per preset (`presets`) | Empty list for every preset | Each preset (mode) has its own list. An empty list disables the requirement for that preset; otherwise the model must read one skill from the list. |
+| Require skill reading (`enabled`) | Enabled | Master switch. When off, no mode is blocked. |
+| Per-mode settings (`modes`) | Every mode off | Each preset (mode) has its own switch and required list, edited in the "required skills per mode" panel. |
 
-The guard uses the list of the preset active in the current session; when the active preset cannot be determined, calls are not blocked. The preset list comes from the agent preset registry, and the multiselect options come from the currently loaded skill catalog — skills installed later appear after a restart. Presets that load no skill provider (for example the minimal mode) get no field and are never blocked. Upgrading from 0.1.x migrates the old flat skill list into the default preset group. Saved skill names that no longer exist stay in the configuration until removed manually.
+The plugin details page renders a **required skills per mode** panel. Every mode gets a switch and a multi-select dropdown that lists only the skills already loaded **in that mode**; the dropdown stays open while you tick entries, so one mode can require several skills at once. Reading any one of them satisfies the requirement. A mode that is switched on but has no selected skill still does not block anything, and a mode without a readable skill surface (for example the minimal mode, which ships no `skill` tool and no PTC executor) is detected and never blocked, so the guard cannot deadlock an agent.
+
+The panel keeps its own draft and writes config.json on its own Save button; the plugin applies the saved value immediately. Skill options are read from each mode's own scope through the preset registry, so a skill registered inside a preset shows up for that preset only. "Refresh skill list" re-reads the catalog, so skills installed later appear without a restart.
+
+The guard uses the settings of the preset active in the current session; when the active preset cannot be determined, calls are not blocked. Upgrading from 0.1.x or 0.2.x migrates the old flat/preset-scoped lists into the per-mode settings. Saved skill names that no longer exist stay in the configuration until removed manually.
 
 A successful read applies to the current session, including resumed sessions, until the next successful context compaction. A `/skill-name` invocation that injects eligible skill instructions also satisfies the requirement.
 
@@ -41,8 +45,10 @@ Rejected calls return **You must read those skills that you should read.**
 
 ```sh
 npm ci
-npm run typecheck
-npm run build
+npm run typecheck   # host + client
+npm run build       # lib/index.js + lib/client.js
 npm test
 npm pack --dry-run
 ```
+
+The client half (`lib/client.js`) is a tsdown-built `window.__ModuleLoader__.load({ id, factory })` closure; `package.json` declares it under `exports["./client"]` and `dsh.client`, and it only registers the configuration panel through `ctx.dshLoaderUi.config.registerPanel`.

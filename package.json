@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugin/dsh-force-read-skill",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "要求 DeepSeek Harness 模型先读取 SKILL，再执行其他工具。",
   "repository": {
     "type": "git",
@@ -17,6 +17,10 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json",
@@ -30,8 +34,9 @@
     "icon.svg"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('lib', { recursive: true, force: true });\"",
+    "build": "npm run clean && tsc -p tsconfig.json && tsc -p tsconfig.client.build.json && tsdown --config tsdown.client.config.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "test": "npm run build && node --test",
     "prepack": "npm run build"
   },
@@ -41,6 +46,12 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@dsh-plugin/dsh-loader"
+      ]
     }
   },
   "peerDependencies": {
@@ -49,6 +60,11 @@
   "devDependencies": {
     "@dsh-plugin/dsh-loader": "2.0.0-dev.42783642741",
     "@types/node": "^24.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tsdown": "^0.22.14",
     "typescript": "^5.9.3"
   }
 }
