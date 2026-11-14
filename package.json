@@ -55,10 +55,10 @@
     }
   },
   "peerDependencies": {
-    "@dsh-plugin/dsh-loader": "^2.0.0-dev.42783642741"
+    "@dsh-plugin/dsh-loader": "^2.0.0-dev.43575304991"
   },
   "devDependencies": {
-    "@dsh-plugin/dsh-loader": "2.0.0-dev.42783642741",
+    "@dsh-plugin/dsh-loader": "2.0.0-dev.43575304991",
     "@types/node": "^24.0.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

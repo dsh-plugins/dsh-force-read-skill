@@ -14,16 +14,6 @@ const VISIBLE_ROWS = 5;
 /** 估算的菜单行高，只用于决定向上还是向下展开。 */
 const ROW_HEIGHT_ESTIMATE = 44;
 
-/**
- * 带行数上限的菜单组件。
- *
- * `maxRows` 由新版 dsh-loader 的 `DshMenu` 提供；尚未升级的 loader 会把这个
- * 属性原样透传给平台菜单，平台菜单只取自己认识的具名属性，因此旧版上只是
- * 退化成不限高，不会报错。这里的类型扩展让插件在两种 loader 上都能编译。
- */
-type CappedMenuProps = React.ComponentProps<typeof Menu> & { maxRows?: number };
-const CappedMenu = Menu as unknown as React.ComponentType<CappedMenuProps>;
-
 /** 菜单里的一项 SKILL。 */
 export interface SkillOption {
   readonly name: string;
@@ -141,7 +131,7 @@ export function SkillMultiSelect({
       aria-label="筛选 SKILL"
       onChange={event => setQuery(event.target.value)}
     />}
-    <CappedMenu
+    <Menu
       open={open}
       portal
       align="start"
