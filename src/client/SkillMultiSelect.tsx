@@ -9,6 +9,21 @@
 import * as React from 'react';
 import { DshMenu as Menu, Icon, type MenuEntry } from '@dsh-plugin/dsh-loader/client';
 
+/** 菜单最多同时显示的行数，超出后在菜单内部滚动。 */
+const VISIBLE_ROWS = 5;
+/** 估算的菜单行高，只用于决定向上还是向下展开。 */
+const ROW_HEIGHT_ESTIMATE = 44;
+
+/**
+ * 带行数上限的菜单组件。
+ *
+ * `maxRows` 由新版 dsh-loader 的 `DshMenu` 提供；尚未升级的 loader 会把这个
+ * 属性原样透传给平台菜单，平台菜单只取自己认识的具名属性，因此旧版上只是
+ * 退化成不限高，不会报错。这里的类型扩展让插件在两种 loader 上都能编译。
+ */
+type CappedMenuProps = React.ComponentProps<typeof Menu> & { maxRows?: number };
+const CappedMenu = Menu as unknown as React.ComponentType<CappedMenuProps>;
+
 /** 菜单里的一项 SKILL。 */
 export interface SkillOption {
   readonly name: string;
@@ -29,8 +44,6 @@ export interface SkillMultiSelectProps {
   idPrefix: string;
 }
 
-/** 菜单高度预算，用于决定向上还是向下展开。 */
-const MENU_MAX_HEIGHT = 320;
 /** 选项超过该数量时才显示筛选框，避免小列表多一行噪声。 */
 const FILTER_THRESHOLD = 8;
 /** 不在选项里的历史选择：保留在菜单末尾，方便手动移除。 */
@@ -66,7 +79,8 @@ export function SkillMultiSelect({
       }
       const below = window.innerHeight - rect.bottom - 12;
       const above = rect.top - 12;
-      setSide(below >= Math.min(MENU_MAX_HEIGHT, above) ? 'bottom' : 'top');
+      // 高度预算按行数估算，决定向上还是向下展开。
+      setSide(below >= Math.min(VISIBLE_ROWS * ROW_HEIGHT_ESTIMATE, above) ? 'bottom' : 'top');
     };
     place();
     window.addEventListener('scroll', place, true);
@@ -127,13 +141,14 @@ export function SkillMultiSelect({
       aria-label="筛选 SKILL"
       onChange={event => setQuery(event.target.value)}
     />}
-    <Menu
+    <CappedMenu
       open={open}
       portal
       align="start"
       side={side}
       items={items}
       footer={footer}
+      maxRows={VISIBLE_ROWS}
       selectedIds={value}
       onSelect={(id: string) => {
         if (id === '__all__') {
