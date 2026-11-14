@@ -1,3 +1,5 @@
 - insert:
+    - id: dsh-force-read-skill-loader-check
+      name: '@dsh-plugin/dsh-force-read-skill/loader-check'
     - id: dsh-force-read-skill
       name: '@dsh-plugin/dsh-force-read-skill'
