@@ -1,9 +1,11 @@
 /**
  * “按模式设置必读 SKILL”管理面板。
  *
- * 通过 dsh-loader 的 `registerPanel` 注册（见 `./index.tsx`），由配置卡片渲染。
- * 面板自己维护草稿并按 loader 的修订号保存，因此每个模式的开关与多选结果
- * 都在点“保存”时一次性写入 config.json。
+ * 模板为该面板声明了 `field: ['modes']`，因此 loader 会把卡片草稿里
+ * `modes` 的当前值与 setter 传进来：面板只改草稿，由卡片的「保存」按钮
+ * （和 Ctrl+S）连同修订号一起提交，不再有第二套保存入口。
+ *
+ * 旧版 loader 不传 `value`/`setValue`，此时退回自带草稿与独立保存。
  *
  * @module dsh-force-read-skill/client/ModeRulesPanel
  */
@@ -32,6 +34,18 @@ const modeLabels: Record<string, string> = {
   cordis: '创造',
 };
 
+/**
+ * loader 新增的草稿绑定；旧版 `ConfigPanelProps` 没有这两个属性，
+ * 因此在这里以可选属性声明，运行时再检测。
+ */
+interface PanelBinding {
+  value?: unknown;
+  setValue?(value: unknown): void;
+}
+
+/** 面板属性：loader 的固定字段加可选草稿绑定。 */
+export type ModeRulesPanelProps = ConfigPanelProps & PanelBinding;
+
 /** 把配置里的 `modes` 读成强类型数组，忽略结构不符的项。 */
 function readModes(value: unknown): ModeSetting[] {
   if (!Array.isArray(value)) {
@@ -55,11 +69,11 @@ function readModes(value: unknown): ModeSetting[] {
   return modes;
 }
 
-/** 合并草稿与技能目录：目录里有、草稿里没有的模式补一条未启用项。 */
-function mergeModes(draft: readonly ModeSetting[], catalog: readonly CatalogMode[]): ModeSetting[] {
-  const byId = new Map(draft.map(mode => [mode.id, mode]));
-  return catalog.map(mode => byId.get(mode.id) ?? { id: mode.id, enabled: false, skills: [] })
-    .concat(draft.filter(mode => !catalog.some(item => item.id === mode.id)));
+/** 模式顺序：先按技能目录顺序，再追加草稿里目录未覆盖的模式。 */
+function mergeRows(modes: readonly ModeSetting[], catalog: readonly CatalogMode[]): ModeSetting[] {
+  const known = new Map(modes.map(mode => [mode.id, mode]));
+  return catalog.map(mode => known.get(mode.id) ?? { id: mode.id, enabled: false, skills: [] })
+    .concat(modes.filter(mode => !catalog.some(item => item.id === mode.id)));
 }
 
 /** 模式的展示名：优先用注册表名称，其次内置中文名，最后回落到 ID。 */
@@ -68,7 +82,9 @@ function modeName(mode: { readonly id: string }, info: CatalogMode | undefined):
 }
 
 /** 按模式配置强制阅读 SKILL 的面板。 */
-export function ModeRulesPanel({ view, client }: ConfigPanelProps): React.ReactElement {
+export function ModeRulesPanel({ view, client, value, setValue }: ModeRulesPanelProps): React.ReactElement {
+  // loader 传入 setValue 时走草稿绑定：改动进入卡片草稿，随卡片保存。
+  const bound = typeof setValue === 'function';
   const [saved, setSaved] = React.useState<ModeSetting[]>(() => readModes(view.value.modes));
   const [revision, setRevision] = React.useState(view.revision);
   const [draft, setDraft] = React.useState<ModeSetting[]>(saved);
@@ -80,20 +96,30 @@ export function ModeRulesPanel({ view, client }: ConfigPanelProps): React.ReactE
   const [notice, setNotice] = React.useState('');
   const [reload, setReload] = React.useState(0);
 
-  const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
+  const modes = bound ? readModes(value) : draft;
+  const dirty = !bound && JSON.stringify(draft) !== JSON.stringify(saved);
 
-  // 外部保存（其他标签页或卡片的“恢复默认值”）后同步；正在编辑时不覆盖草稿。
+  /** 写回：绑定时写卡片草稿，否则写面板自己的草稿。 */
+  const commit = (next: ModeSetting[]): void => {
+    if (bound) {
+      setValue(next as unknown as ConfigValues);
+      return;
+    }
+    setDraft(next);
+  };
+
+  // 未绑定时自行跟踪修订号；绑定时由卡片负责，忽略外部快照变化。
   const seenRevision = React.useRef(view.revision);
   React.useEffect(() => {
-    if (view.revision === seenRevision.current) {
+    if (bound || view.revision === seenRevision.current) {
       return;
     }
     seenRevision.current = view.revision;
-    const next = mergeModes(readModes(view.value.modes), catalog);
+    const next = readModes(view.value.modes);
     setSaved(next);
     setRevision(view.revision);
     setDraft(current => (JSON.stringify(current) === JSON.stringify(saved) ? next : current));
-  }, [view, saved, catalog]);
+  }, [bound, view, saved]);
 
   React.useEffect(() => {
     const controller = new AbortController();
@@ -105,18 +131,21 @@ export function ModeRulesPanel({ view, client }: ConfigPanelProps): React.ReactE
           return;
         }
         const payload = result.value as unknown as CatalogPayload | undefined;
-        const modes = Array.isArray(payload?.modes) ? payload.modes : [];
-        // 目录里新增的模式以未启用项补进基线，避免一进页面就显示“有未保存的修改”。
-        const baseline = mergeModes(readModes(view.value.modes), modes);
-        setCatalog(modes);
-        setSaved(baseline);
-        setDraft(baseline);
+        setCatalog(Array.isArray(payload?.modes) ? payload.modes : []);
+        if (!bound) {
+          // 未绑定时补全基线，避免新增模式一出现就被当成未保存修改。
+          const baseline = mergeRows(readModes(view.value.modes), Array.isArray(payload?.modes) ? payload.modes : []);
+          setSaved(baseline);
+          setDraft(baseline);
+        }
       }, cause => {
         if (!controller.signal.aborted) {
           setLoadError(cause instanceof Error ? cause.message : String(cause));
-          const current = readModes(view.value.modes);
-          setDraft(current);
-          setSaved(current);
+          if (!bound) {
+            const current = readModes(view.value.modes);
+            setDraft(current);
+            setSaved(current);
+          }
         }
       })
       .finally(() => {
@@ -125,16 +154,21 @@ export function ModeRulesPanel({ view, client }: ConfigPanelProps): React.ReactE
         }
       });
     return () => controller.abort();
-    // view 只用于取初始草稿；保存后的值由 setSaved/setDraft 维护，避免每次输入都重新请求。
+    // 目录只在挂载与手动刷新时读取；绑定时草稿变化不应触发重新请求。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, reload]);
 
   const update = (id: string, change: Partial<ModeSetting>): void => {
-    setDraft(current => current.map(mode => mode.id === id ? { ...mode, ...change } : mode));
+    const exists = modes.some(mode => mode.id === id);
+    const next = exists
+      ? modes.map(mode => (mode.id === id ? { ...mode, ...change } : mode))
+      : [...modes, { id, enabled: false, skills: [], ...change }];
+    commit(next);
     setSaveError('');
     setNotice('');
   };
 
+  /** 未绑定时的独立保存。 */
   const save = (): void => {
     setSaving(true);
     setSaveError('');
@@ -158,7 +192,7 @@ export function ModeRulesPanel({ view, client }: ConfigPanelProps): React.ReactE
   };
 
   const disableAll = (): void => {
-    setDraft(current => current.map(mode => ({ id: mode.id, enabled: false, skills: [] })));
+    commit(mergeRows(modes, catalog).map(mode => ({ id: mode.id, enabled: false, skills: [] })));
     setNotice('');
     setSaveError('');
   };
@@ -167,13 +201,13 @@ export function ModeRulesPanel({ view, client }: ConfigPanelProps): React.ReactE
     return <section className="dfrs-panel"><style>{PANEL_CSS}</style><p className="dfrs-status">正在读取各模式已加载的 SKILL…</p></section>;
   }
 
-  const rows = draft.map(mode => ({ mode, info: catalog.find(item => item.id === mode.id) }));
-  const active = draft.filter(mode => mode.enabled && mode.skills.length > 0).length;
+  const rows = mergeRows(modes, catalog).map(mode => ({ mode, info: catalog.find(item => item.id === mode.id) }));
+  const active = rows.filter(row => row.mode.enabled && row.mode.skills.length > 0).length;
 
   return <section className="dfrs-panel">
     <style>{PANEL_CSS}</style>
     <div className="dfrs-toolbar">
-      <span className="dfrs-grow dfrs-status">共 {draft.length} 个模式，{active} 个生效（已开启且至少选择 1 个 SKILL）。</span>
+      <span className="dfrs-grow dfrs-status">共 {rows.length} 个模式，{active} 个生效（已开启且至少选择 1 个 SKILL）。</span>
       <Button small icon="Refresh" onClick={() => setReload(value => value + 1)}>刷新技能列表</Button>
     </div>
     {loadError !== '' && <p className="dfrs-alert" role="alert">读取技能目录失败：{loadError}</p>}
@@ -222,11 +256,15 @@ export function ModeRulesPanel({ view, client }: ConfigPanelProps): React.ReactE
       </div>
     </Scrollbar>
     <div className="dfrs-actions">
-      <Button variant="primary" small loading={saving} disabled={!dirty || saving} onClick={save}>保存</Button>
-      <Button small disabled={!dirty || saving} onClick={discard}>取消修改</Button>
+      {bound
+        ? <span className="dfrs-grow dfrs-status">改动随本卡片的「保存」一并提交。</span>
+        : <>
+          <Button variant="primary" small loading={saving} disabled={!dirty || saving} onClick={save}>保存</Button>
+          <Button small disabled={!dirty || saving} onClick={discard}>取消修改</Button>
+          <span className="dfrs-grow"/>
+          {dirty && <span className="dfrs-status">有未保存的修改</span>}
+        </>}
       <Button small disabled={saving} onClick={disableAll}>全部关闭</Button>
-      <span className="dfrs-grow"/>
-      {dirty && <span className="dfrs-status">有未保存的修改</span>}
       {notice !== '' && <span className="dfrs-status" role="status">{notice}</span>}
     </div>
     {saveError !== '' && <p className="dfrs-alert" role="alert">保存失败：{saveError}</p>}

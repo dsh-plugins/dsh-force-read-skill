@@ -238,8 +238,10 @@ export async function apply(ctx: PluginContext): Promise<void> {
     panels: [{
       id: 'mode-rules',
       title: '按模式设置必读 SKILL',
-      description: '每个模式单独开关，并从该模式已加载的 SKILL 中多选必读项。',
+      description: '每个模式单独开关，并从该模式已加载的 SKILL 中多选必读项；改动随本卡片的「保存」一并提交。',
       custom: true,
+      // 绑定 modes 字段：面板直接编辑卡片草稿，与卡片共用一次保存与修订号。
+      field: ['modes'],
       fields: [],
       operations: [{ id: catalogOperation, readOnly: true }],
     }],

@@ -5,7 +5,8 @@
  *
  * @module dsh-force-read-skill/client
  */
-import { ModeRulesPanel } from './ModeRulesPanel.js';
+import type * as React from 'react';
+import { ModeRulesPanel, type ModeRulesPanelProps } from './ModeRulesPanel.js';
 
 export const name = '@dsh-plugin/dsh-force-read-skill';
 export const inject = ['dshLoaderUi'];
@@ -17,7 +18,7 @@ interface ClientContext {
       registerPanel(owner: ClientContext, options: {
         id: string;
         configId: string;
-        component: typeof ModeRulesPanel;
+        component: React.ComponentType<ModeRulesPanelProps>;
       }): () => void;
     };
   };
